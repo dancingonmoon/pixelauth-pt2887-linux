@@ -1,0 +1,129 @@
+{
+    "hw_type": "usb",
+
+    "usb_id_table": [
+        {
+            "vid": "2f0a",
+            "pid": "1055",
+            "description": "pixelauth pa180 device"
+        },
+        {
+            "vid": "2f0a",
+            "pid": "8020",
+            "description": "pixelauth pa180 device"
+        },
+        {
+            "vid": "2f0a",
+            "pid": "8050",
+            "description": "pixelauth pa180 device"
+        },
+        {
+            "vid": "2f0a",
+            "pid": "8001",
+            "description": "pixelauth pa180 device"
+        }
+    ],
+
+    "driver_config": {
+        "device_name": "pabio-pa180k",
+        "full_name": "pixelauth pa180 driver",
+        "biotype": 0,
+        "stotype": 0,
+        "eigtype": 0,
+        "vertype": 0,
+        "idtype": 0,
+        "bustype": 1
+    },
+
+    "operation_logs": [
+        {
+            "device_sn": "0000000000000000",
+            "operation": "calibrate",
+            "timestamp": "2021-05-08 11:22:32"
+        }
+    ],
+
+    "support_pids": [55, 56],
+
+    "support_cos_types": [
+        {
+            "cos_type": 225,
+            "sn_binding": 1,
+
+            "max_user_record_count": 0,
+            "max_total_record_count": 10,
+            "start_enroll_id": 10,
+
+            "update_firmware_valid": 1,
+            "loader_cos_types": [185, 204],
+            "update_fw_name": "zhuoyi_6348",
+
+            "download_firmware_valid": 1,
+            "raw_loader_cos_types": [160],
+            "download_fw_name": "???",
+
+            "record_is_vector": 1,
+            "support_usb_selective_suspend": 1,
+            "verify_before_enroll": 1
+        },
+        {
+            "cos_type": 198,
+            "sn_binding": 1,
+
+            "max_user_record_count": 0,
+            "max_total_record_count": 10,
+            "start_enroll_id": 10,
+
+            "update_firmware_valid": 1,
+            "loader_cos_types": [185, 200, 204],
+            "update_fw_name": "zhuoyi_6348",
+
+            "download_firmware_valid": 1,
+            "raw_loader_cos_types": [160],
+            "download_fw_name": "???",
+
+            "record_is_vector": 1,
+            "support_usb_selective_suspend": 1,
+            "verify_before_enroll": 1
+        },
+        {
+            "cos_type": 179,
+            "sn_binding": 0,
+            "max_user_record_count": 0,
+            "max_total_record_count": 0
+        },
+        {
+            "cos_type": 202,
+            "sn_binding": 1,
+
+            "max_user_record_count": 0,
+            "max_total_record_count": 10,
+            "start_enroll_id": 10,
+
+            "update_firmware_valid": 1,
+            "loader_cos_types": [204],
+            "update_fw_name": "zhuoyi_6348",
+
+            "download_firmware_valid": 1,
+            "raw_loader_cos_types": [160],
+            "download_fw_name": "???",
+
+            "record_is_vector": 1,
+            "support_usb_selective_suspend": 1,
+            "verify_before_enroll": 1
+        },
+        {
+            "cos_type": 160,
+            "sn_binding": 0,
+            "max_user_record_count": 0,
+            "max_total_record_count": 0,
+
+            "download_firmware_valid": 1,
+            "raw_loader_cos_types": [160],
+            "download_fw_name": "???"
+        }
+    ],
+
+    "uart_baudrate": 0,
+    "uart_paths": []
+}

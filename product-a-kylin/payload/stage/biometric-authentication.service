@@ -1,0 +1,15 @@
+[Unit]
+Description=Authenticate by human biometric
+Documentation=http://gogs.kylin.com/KylinBiometric/biometric-authentication
+After=systemd-udevd.service
+After=hwfp_init.service
+
+[Service]
+Type=dbus
+Restart=always
+RestartSec=0
+BusName=org.ukui.Biometric
+ExecStart=/usr/lib/biometric-authentication/biometric-authenticationd
+
+[Install]
+WantedBy=multi-user.target

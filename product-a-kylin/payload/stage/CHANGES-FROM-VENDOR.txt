@@ -1,0 +1,35 @@
+本目录与厂商原始 stage 的差异
+================================
+
+com.pixelauth.pa180k.rules  —— 【已替换】
+
+  厂商原版（ISO 里那份，2025-09-02）：
+      ACTION=="add", SUBSYSTEM=="usb", ... ATTR{power/control}= "auto", MODE="0666"
+
+  本包使用（2026-09-27 在本机实测通过的那份）：
+      ACTION=="add|change", SUBSYSTEM=="usb", ... ATTR{power/control}="auto", MODE="0666"
+
+  改了两处：
+    1. add  →  add|change   ：设备重新枚举（change 事件）时也要设权限与电源策略。
+                                本机每次枚举都会出现 change 事件，只有 add 会漏掉。
+    2. }= "auto" → }="auto" ：厂商原版属性名后有空格，是无效语法。
+
+  为什么重要：不修这两处，设备节点可能拿不到 0666 权限，用户态的
+  biometric-auth-client 就访问不到指纹模组。
+
+其余文件与厂商原版一致。
+
+org.ukui.Biometric.service  —— 【新增文件】
+
+  厂商 stage 里**没有**这个文件，原安装器也不装它。
+  本机上的那一份是 2026-09-27 20:25 手工创建的（在框架装好之后）。
+
+  作用：D-Bus 激活文件。有这个文件，任何程序一调用 org.ukui.Biometric，
+        D-Bus 就会自动把 biometric-authenticationd 拉起来；
+        没有它，就只能靠 systemd 服务（崩溃后不会自动恢复）。
+
+  内容：
+      [D-BUS Service]
+      Name=org.ukui.Biometric
+      Exec=/usr/lib/biometric-authentication/biometric-authenticationd
+      User=root

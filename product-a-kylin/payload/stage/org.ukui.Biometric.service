@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=org.ukui.Biometric
+Exec=/usr/lib/biometric-authentication/biometric-authenticationd
+User=root

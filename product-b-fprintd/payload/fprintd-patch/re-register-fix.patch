@@ -1,0 +1,112 @@
+--- a/src/device.c
++++ b/src/device.c
+@@ -58,6 +58,10 @@
+                                          const char   *user,
+                                          FpFinger      finger,
+                                          GError      **error);
++/* [pa] 见 enroll_identify_cb 末尾（重新登记安全修复） */
++static gboolean user_has_print_enrolled (FprintDevice *rdev,
++                                         const char   *user,
++                                         FpFinger      finger);
+ 
+ static GQuark quark_auth_user = 0;
+ 
+@@ -2063,6 +2067,7 @@
+   g_autoptr(GError) error = NULL;
+   g_autoptr(FpPrint) matched_print = NULL;
+   g_autoptr(FpPrint) found_print = NULL;
++  g_autoptr(SessionData) session = NULL;
+   FprintDevice *rdev = user_data;
+   FprintDevicePrivate *priv = fprint_device_get_instance_private (rdev);
+   const char *name;
+@@ -2117,10 +2122,22 @@
+ 
+   if (matched_print)
+     {
+-      g_signal_emit (rdev, signals[SIGNAL_ENROLL_STATUS], 0, "enroll-duplicate", TRUE);
++      /* [pa] 重新登记安全修复：匹配到的如果就是"正在登记的那根手指"，
++       * 这不是重复指纹，而是更新（重新登记）。放行继续；旧记录推迟到
++       * 去重检查全部通过之后才删除（见下方 stage-passed 之前）。
++       * 匹配到别的已录手指 → 照旧判重复中止，此时旧记录原封不动 ✓ */
++      if (fp_print_get_finger (matched_print) != priv->enroll_data)
++        {
++          g_signal_emit (rdev, signals[SIGNAL_ENROLL_STATUS], 0, "enroll-duplicate", TRUE);
+ 
+-      stoppable_action_completed (rdev);
+-      return;
++          stoppable_action_completed (rdev);
++          return;
++        }
++
++      /* [pa] 上一步原本必然 return；放行之后要绕开下面的 case-2"孤儿回收"：
++       * 与"自己"匹配上的那枚 device print 就是本手指的旧记录，不是孤儿，
++       * 稍后由统一的删除处理（一次删干净，避免两次删除撞车）。 */
++      g_clear_object (&found_print);
+     }
+ 
+   if (found_print && fp_device_has_feature (priv->dev, FP_DEVICE_FEATURE_STORAGE))
+@@ -2143,6 +2160,26 @@
+         }
+     }
+ 
++  /* [pa] 重新登记安全修复：去重检查到这里已全部通过 —— 现在才删除该手指的
++   * 旧记录（如果有）。原实现是 EnrollStart 一进来就删（早于本检查），于是
++   * "按错手指被判重复而中止" 或 "中途放弃" 时，旧的已毁、新的又没录上。
++   * 放在这里的语义：
++   *   · 按到别的已录手指 → 上面已 abort，旧记录没被碰过 ✓
++   *   · 按对自己 / 没撞号 → 到这里才替换旧记录，然后开始真录入 */
++  session = session_data_get (priv);
++  if (user_has_print_enrolled (rdev, session->username, priv->enroll_data))
++    {
++      if (!delete_enrolled_fingers (rdev, session->username, priv->enroll_data, &error))
++        {
++          g_warning ("Failed to delete the existing print before re-enrollment: %s",
++                     error->message);
++          g_signal_emit (rdev, signals[SIGNAL_ENROLL_STATUS], 0, "enroll-failed", TRUE);
++
++          stoppable_action_completed (rdev);
++          return;
++        }
++    }
++
+   g_signal_emit (rdev, signals[SIGNAL_ENROLL_STATUS], 0, "enroll-stage-passed", FALSE);
+ 
+   /* We are good and can start to enroll. */
+@@ -2194,14 +2231,10 @@
+       return TRUE;
+     }
+ 
+-  if (existing_print)
+-    {
+-      if (!delete_enrolled_fingers (rdev, session->username, finger, &error))
+-        {
+-          g_dbus_method_invocation_return_gerror (invocation, error);
+-          return TRUE;
+-        }
+-    }
++  /* [pa] 重新登记安全修复：这里原本会立刻删除该手指的旧记录（早于去重检查）。
++   * 现在不删了 —— 删除推迟到"去重检查通过、即将开始真录入"那一刻
++   * （见 enroll_identify_cb 末尾）。这样按错手指/中途放弃都不会毁掉旧指纹。
++   * 不支持 IDENTIFY 的设备没有去重检查，保持旧行为（见下方 else 分支）。 */
+ 
+   g_debug ("start enrollment device %d finger %d", priv->id, finger);
+ 
+@@ -2248,6 +2281,18 @@
+       g_warning ("Device %s does not support duplicate identification and so "
+                  "fprintd duplicate detection won't work",
+                  fp_device_get_name (priv->dev));
++
++      /* [pa] 没有 IDENTIFY 去重检查的设备没有"检查通过"这个时点，
++       * 保持原行为：开始录入前先删旧记录。 */
++      if (existing_print)
++        {
++          if (!delete_enrolled_fingers (rdev, session->username, finger, &error))
++            {
++              g_dbus_method_invocation_return_gerror (invocation, error);
++              return TRUE;
++            }
++        }
++
+       enroll_start (rdev);
+     }
+ 

@@ -1,0 +1,13 @@
+# 构建产物（用 make-package.sh 生成）
+dist/
+
+# meson / ninja 构建目录
+**/build/
+**/build-*/
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 调试符号包
+*.ddeb
