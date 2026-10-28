@@ -27,7 +27,8 @@ sec()  { [ "$QUIET" = 1 ] || { echo; echo "$*"; }; }
 VID=2f0a; PID=8020
 TOD_DIR=/usr/lib/x86_64-linux-gnu/libfprint-2/tod-1
 TOD_SO="${TOD_DIR}/libpixelauth_pt2887.so"
-HELPER=/usr/local/bin/pam-biometric-exec.sh
+HELPER=/usr/local/bin/fp-earlypass-helper
+PYBIN=/usr/local/lib/fp-earlypass
 U="${SUDO_USER:-${USER:-$(id -un)}}"
 
 [ "$QUIET" = 1 ] || {
@@ -170,24 +171,26 @@ if [ -x "$HELPER" ]; then
     OWNER=$(stat -c '%U' "$HELPER")
     [ "$OWNER" = root ] && ok "PAM 助手在（root:root）" \
                         || bad "PAM 助手属主是 ${OWNER}，必须是 root（提权风险）"
-    # 助手是哪一版？fprintd 版才是当前形态
     if grep -q 'fprintd-verify' "$HELPER" 2>/dev/null; then
-        ok "助手是 fprintd 版（当前形态）"
+        ok "助手是 0.3.0 单进程版（当前形态）"
         if grep -q -- '-f any' "$HELPER" 2>/dev/null; then
             ok "助手带 -f any（sudo 认全部已录手指）"
         else
             warn "助手缺 -f any —— sudo 只认列表第一根手指（其余静默回退密码）"
-            info "换新版：重跑本产品的 install.sh"
         fi
+        [ -f "${PYBIN}/fpearlypass/run.py" ] && ok "助手 Python 包在（${PYBIN}/fpearlypass）" \
+                                            || bad "助手 Python 包缺失 —— 重跑 install.sh"
     else
-        warn "助手还在调麒麟 CLI（旧版）—— 麒麟退役后会回退密码。换新版见 docs"
+        warn "助手不是 0.3.0 单进程版（可能是旧的 pam-biometric-exec.sh）—— 重跑 install.sh"
     fi
 else
     bad "PAM 助手缺失 —— 跑本产品的 install.sh"
 fi
 for s in sudo sudo-i; do
-    if grep -qF 'pam-biometric-exec.sh' "/etc/pam.d/$s" 2>/dev/null; then
-        ok "/etc/pam.d/$s 已接线"
+    if grep -qF 'fp-earlypass-helper' "/etc/pam.d/$s" 2>/dev/null; then
+        grep -qE '^auth +sufficient +pam_exec\.so +stdout +/usr/local/bin/fp-earlypass-helper$' "/etc/pam.d/$s" \
+            && ok "/etc/pam.d/$s 已接线（sufficient ✓）" \
+            || warn "/etc/pam.d/$s 接线不是 sufficient（指纹成功也会再要密码）"
     else
         bad "/etc/pam.d/$s 缺少指纹行 —— 见 docs 的安装章节"
     fi

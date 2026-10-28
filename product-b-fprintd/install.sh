@@ -10,14 +10,14 @@
 # 装什么：
 #   1. TOD 驱动 → /usr/lib/x86_64-linux-gnu/libfprint-2/tod-1/
 #      （用包内预编译的 .so；加 --build 则现场重新编译）
-#   2. PAM 助手 → /usr/local/bin/pam-biometric-exec.sh（调 fprintd-verify）
+#   2. PAM 助手 → /usr/local/bin/fp-earlypass-helper（0.3.0 单进程版）+ Python 包
 #   3. PAM 接线 → /etc/pam.d/sudo 与 sudo-i 各插一行（**事务性**，失败全还原）
 #   4. 精确删除工具 → /usr/local/bin/fprint-delete-finger.py
 #   5. fprintd「重新登记」修复补丁（dpkg 装 1.94.3-1+pa1；--no-fprintd-patch 可跳过）
 #   6. 跑一遍体检
 #
-# ★ 和产品 A 的关系：两包都装 /usr/local/bin/pam-biometric-exec.sh，
-#   但**产品 B 的是 fprintd 版**，装 B 就等于把 sudo 从麒麟切到 fprintd。
+# ★ 和产品 A 的关系：产品 A 装的是麒麟栈的 pam-biometric-exec.sh；
+#   产品 B 0.3.0 起改为装 /usr/local/bin/fp-earlypass-helper，装 B 就等于把 sudo 切到 fprintd 单进程助手。
 #   装 B 之后麒麟可以退役（见 README「退役麒麟」一节）。
 # ============================================================================
 
@@ -29,9 +29,11 @@ PAYLOAD="${SCRIPT_DIR}/payload"
 
 TOD_DIR=/usr/lib/x86_64-linux-gnu/libfprint-2/tod-1
 TOD_SO="${TOD_DIR}/libpixelauth_pt2887.so"
-HELPER_DST=/usr/local/bin/pam-biometric-exec.sh
+HELPER_DST=/usr/local/bin/fp-earlypass-helper
+PYBIN_DST=/usr/local/lib/fp-earlypass
+SETWIN_DST=/usr/local/bin/fp-earlypass-set-window
 DELTOOL_DST=/usr/local/bin/fprint-delete-finger.py
-PAM_LINE='auth    sufficient    pam_exec.so stdout /usr/local/bin/pam-biometric-exec.sh'
+PAM_LINE='auth    sufficient    pam_exec.so stdout /usr/local/bin/fp-earlypass-helper'
 PAM_FILES=(/etc/pam.d/sudo /etc/pam.d/sudo-i)
 VID=2f0a; PID=8020
 VERSION="$(cat "${SCRIPT_DIR}/VERSION" 2>/dev/null || echo '未标注')"
@@ -60,9 +62,9 @@ echo
 echo "[状态]"
 printf '  TOD 驱动    : '; [ -f "$TOD_SO" ] && echo "已装（$(stat -c%s "$TOD_SO") 字节）" || echo "未装"
 printf '  PAM 助手    : '; if [ -x "$HELPER_DST" ]; then
-    grep -q 'fprintd-verify' "$HELPER_DST" 2>/dev/null && echo "已装（fprintd 版 ✓）" || echo "已装（★ 还是麒麟版）"
+    [ -f "${PYBIN_DST}/fpearlypass/run.py" ] && echo "已装（0.3.0 单进程版 ✓）" || echo "已装（★ 缺 Python 包）"
 else echo "未装"; fi
-printf '  sudo 接线   : '; PAMOK=1; for s in sudo sudo-i; do grep -qF 'pam-biometric-exec.sh' "/etc/pam.d/$s" 2>/dev/null || PAMOK=0; done
+printf '  sudo 接线   : '; PAMOK=1; for s in sudo sudo-i; do grep -qF 'fp-earlypass-helper' "/etc/pam.d/$s" 2>/dev/null || PAMOK=0; done
 [ "$PAMOK" = 1 ] && echo "已接线" || echo "未接线"
 printf '  删除工具    : '; [ -x "$DELTOOL_DST" ] && echo "已装" || echo "未装"
 printf '  fprintd 修复 : '; FPVER=$(dpkg-query -W -f'${Version}' fprintd 2>/dev/null); case "$FPVER" in
@@ -91,7 +93,8 @@ if [ "$ASSUME_YES" -eq 0 ]; then
     echo
     echo "即将安装到："
     echo "  ${TOD_SO}"
-    echo "  ${HELPER_DST}          （fprintd 版 PAM 助手）"
+    echo "  ${HELPER_DST}          （0.3.0 单进程版 PAM 助手）"
+    echo "  ${PYBIN_DST}/fpearlypass/          （助手用的 Python 包）"
     echo "  ${PAM_FILES[*]}        （各插 1 行，事务性）"
     echo "  ${DELTOOL_DST}"
     [ "$SKIP_FPRINTD_PATCH" -eq 0 ] && echo "  fprintd                （dpkg 装 1.94.3-1+pa1：重登记修复 + apt-mark hold）"
@@ -121,16 +124,26 @@ echo "  ✅ ${TOD_SO}（$(stat -c%s "$TOD_SO") 字节）"
 # --------------------------------------------------------------- 2 助手
 echo
 echo "############################################################"
-echo "# 2/5：PAM 助手（fprintd 版）"
+echo "# 2/5：PAM 助手（0.3.0 单进程版）"
 echo "############################################################"
 for d in /usr/local /usr/local/bin; do
     [ "$(stat -c '%U' "$d")" = root ] || { echo "ERROR: ${d} 属主不是 root（提权风险），拒绝安装"; exit 1; }
 done
 if [ -f "$HELPER_DST" ]; then
-    cp -p "$HELPER_DST" "${BACKUP_DIR}/pam-biometric-exec.sh.orig" && echo "  已备份旧助手"
+    cp -p "$HELPER_DST" "${BACKUP_DIR}/fp-earlypass-helper.orig" && echo "  已备份旧助手"
 fi
-install -m 0755 -o root -g root "${PAYLOAD}/pam-biometric-exec.sh" "$HELPER_DST"
-echo "  ✅ ${HELPER_DST}（root:root 0755）"
+# 旧版助手（fprintd 版 pam-biometric-exec.sh）如果还在，一并备份后删除，避免两套助手并存
+if [ -f /usr/local/bin/pam-biometric-exec.sh ]; then
+    cp -p /usr/local/bin/pam-biometric-exec.sh "${BACKUP_DIR}/pam-biometric-exec.sh.orig" && echo "  已备份旧助手 pam-biometric-exec.sh"
+fi
+install -d -m 0755 "${PYBIN_DST}/fpearlypass"
+install -m 0644 "${PAYLOAD}"/fpearlypass/*.py "${PYBIN_DST}/fpearlypass/"
+install -m 0755 -o root -g root "${PAYLOAD}/fp-earlypass-helper.sh" "$HELPER_DST"
+install -m 0755 -o root -g root "${PAYLOAD}/set-window.sh" "$SETWIN_DST"
+if ! env -i PATH=/usr/bin:/bin /usr/bin/python3 -c 'import sys; sys.path.insert(0, "'"${PYBIN_DST}"'"); import fpearlypass.session' 2>/dev/null; then
+    echo "ERROR: Python 包导入自检失败"; exit 1
+fi
+echo "  ✅ ${HELPER_DST}（root:root 0755）+ 包 ${PYBIN_DST}/fpearlypass（导入自检通过）"
 
 # --------------------------------------------------------------- 3 PAM
 echo
@@ -140,8 +153,9 @@ echo "############################################################"
 CHANGED=()
 for f in "${PAM_FILES[@]}"; do
     [ -f "$f" ] || continue
-    if grep -qF 'pam-biometric-exec.sh' "$f"; then
-        echo "  ⏭  ${f} 已接线，跳过"
+    # 0.3.0：已接线就改成 sufficient；旧行（pam-biometric-exec.sh / optional）也要替换
+    if grep -qE '^auth +(sufficient|optional) +pam_exec\.so +stdout +/usr/local/bin/fp-earlypass-helper$' "$f"; then
+        echo "  ⏭  ${f} 已是 sufficient 接线，跳过"
     else
         CHANGED+=("$f")
     fi
@@ -157,8 +171,11 @@ if [ ${#CHANGED[@]} -gt 0 ]; then
             ok_all=0; break
         fi
         tmp="$(mktemp)"
-        awk -v n="$n" -v line="$PAM_LINE" 'NR==n { print line } { print }' "$f" > "$tmp" && cat "$tmp" > "$f"
-        rm -f "$tmp"
+        # 先删掉旧助手行（pam-biometric-exec.sh / optional 版），再在 @include common-auth 之前插入 sufficient 行
+        grep -vE '^auth +(sufficient|optional) +pam_exec\.so +stdout +/usr/local/bin/(pam-biometric-exec\.sh|fp-earlypass-helper)$' "$f" > "$tmp"
+        n=$(grep -n '^@include common-auth' "$tmp" | head -1 | cut -d: -f1)
+        awk -v n="$n" -v line="$PAM_LINE" 'NR==n { print line } { print }' "$tmp" > "${tmp}.2" && cat "${tmp}.2" > "$f"
+        rm -f "$tmp" "${tmp}.2"
     done
     if [ "$ok_all" -ne 1 ]; then
         for f in "${CHANGED[@]}"; do
@@ -167,7 +184,7 @@ if [ ${#CHANGED[@]} -gt 0 ]; then
         echo "ERROR: PAM 接线失败，已全部还原。系统保持原状。"; exit 1
     fi
     for f in "${CHANGED[@]}"; do
-        c=$(grep -cF 'pam-biometric-exec.sh' "$f")
+        c=$(grep -cF 'fp-earlypass-helper' "$f")
         [ "$c" -eq 1 ] || { for g in "${CHANGED[@]}"; do cp -p "${BACKUP_DIR}/$(basename "$g").orig" "$g"; done
                             echo "ERROR: ${f} 校验失败，已还原"; exit 1; }
         echo "  ✅ ${f}（插了 1 行）"
@@ -225,7 +242,8 @@ cat <<EOF
  安装完成。
 
  回滚（只回滚本产品装的东西）：
-   sudo cp -p ${BACKUP_DIR}/pam-biometric-exec.sh.orig ${HELPER_DST} 2>/dev/null
+   sudo cp -p ${BACKUP_DIR}/fp-earlypass-helper.orig ${HELPER_DST} 2>/dev/null
+   sudo rm -rf ${PYBIN_DST} ${SETWIN_DST}
    sudo cp -p ${BACKUP_DIR}/libpixelauth_pt2887.so.orig ${TOD_SO} 2>/dev/null
    sudo ./payload/fprintd-patch/install-fprintd-patched.sh revert   # 还原原版 fprintd + libpam-fprintd
    （PAM 行的原文件也在 ${BACKUP_DIR}/ 下）

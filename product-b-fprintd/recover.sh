@@ -14,7 +14,9 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACTION="${1:-status}"
 
 TOD_SO=/usr/lib/x86_64-linux-gnu/libfprint-2/tod-1/libpixelauth_pt2887.so
-HELPER=/usr/local/bin/pam-biometric-exec.sh
+HELPER=/usr/local/bin/fp-earlypass-helper
+PYBIN=/usr/local/lib/fp-earlypass
+SETWIN=/usr/local/bin/fp-earlypass-set-window
 DELTOOL=/usr/local/bin/fprint-delete-finger.py
 PAM_FILES=(/etc/pam.d/sudo /etc/pam.d/sudo-i)
 
@@ -47,23 +49,26 @@ case "$ACTION" in
       echo "[1] PAM 接线"
       for f in "${PAM_FILES[@]}"; do
           [ -f "$f" ] || continue
-          grep -qF 'pam-biometric-exec.sh' "$f" || { echo "  ⏭  $f 本来就没有指纹行"; continue; }
+          grep -qE 'fp-earlypass-helper|pam-biometric-exec\.sh' "$f" || { echo "  ⏭  $f 本来就没有指纹行"; continue; }
           if [ -n "$BK" ] && [ -f "${BK}/$(basename "$f").orig" ]; then
               cp -p "${BK}/$(basename "$f").orig" "$f" && echo "  ✅ 用备份还原 $(basename "$f")"
           else
               cp -p "$f" "${f}.bak-preb-$(date +%Y%m%d)" 2>/dev/null
-              sed -i '/pam-biometric-exec.sh/d' "$f" && echo "  ✅ 删行 $(basename "$f")（原件备份为 ${f}.bak-preb-*）"
+              sed -i -E '/fp-earlypass-helper|pam-biometric-exec\.sh/d' "$f" && echo "  ✅ 删行 $(basename "$f")（原件备份为 ${f}.bak-preb-*）"
           fi
       done
 
       # 2) 移除我们装的文件
       echo
       echo "[2] 移除文件"
-      for f in "$DELTOOL" /usr/local/bin/fprint-delete-finger "$HELPER"; do
+      for f in "$DELTOOL" /usr/local/bin/fprint-delete-finger "$HELPER" "$SETWIN"; do
           if [ -e "$f" ] || [ -L "$f" ]; then
               rm -f "$f" && echo "  ✅ 删除 $f"
           fi
       done
+      if [ -d "$PYBIN" ]; then
+          rm -rf "$PYBIN" && echo "  ✅ 删除 $PYBIN（助手 Python 包）"
+      fi
       if [ -f "$TOD_SO" ]; then
           if [ -n "$BK" ] && [ -f "${BK}/libpixelauth_pt2887.so.orig" ]; then
               cp -p "${BK}/libpixelauth_pt2887.so.orig" "$TOD_SO" && echo "  ✅ 还原旧驱动"

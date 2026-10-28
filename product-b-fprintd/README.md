@@ -308,7 +308,7 @@ sudo ./payload/checkup.sh
 | sudo 没有提示 | `tail -20 /tmp/bioauth-pam.log` | 助手缺失/不可执行（权限必须是 755 root:root） |
 | **指纹录过却验不过** | `checkup.sh` 的 `[1] 芯片侧` | 索引没了，或记录是 `0x33` 占位符 |
 | GNOME 里删指纹没反应（或变成全删） | — | GNOME 46 没实现"删单枚" → 用 `fprint-delete-finger`（第 4.2 节） |
-| **sudo 只认列表第一根手指**（按别的没反应） | `grep -- '-f any' /usr/local/bin/pam-biometric-exec.sh` | 助手是旧版（没带 `-f any`）→ 重跑 `install.sh` |
+| **sudo 只认列表第一根手指**（按别的没反应） | `grep -- '-f any' /usr/local/bin/fp-earlypass-helper` | 助手是旧版（没带 `-f any`）→ 重跑 `install.sh` |
 | **apt 升级后「重新登记」又开始毁数据** | `dpkg -s fprintd \| grep Version` | fprintd 被换回原版 → `sudo ./payload/fprintd-patch/install-fprintd-patched.sh apply` |
 
 ### 6.3 芯片索引被清空怎么办
@@ -399,11 +399,12 @@ sudo systemctl daemon-reload && sudo systemctl restart fprintd
 ### 8.4 为什么 PAM 用 `sufficient`
 
 ```
-auth sufficient pam_exec.so stdout /usr/local/bin/pam-biometric-exec.sh
+auth sufficient pam_exec.so stdout /usr/local/bin/fp-earlypass-helper
 ```
 
 - 助手返回 0（指纹通过）→ 放行
 - 任何其他情况（没按/不匹配/超时/**助手本身坏了**）→ 继续走密码
+- **必须是 `sufficient`**：写成 `optional` 时，指纹通过也会被 `common-auth` 的 `pam_unix` 再要一次密码
 
 **也就是说：指纹这一层永远不可能把人锁在外面。** 助手内部所有外部调用都套了 `timeout`。
 
@@ -416,7 +417,9 @@ auth sufficient pam_exec.so stdout /usr/local/bin/pam-biometric-exec.sh
 | 路径 | 作用 |
 |---|---|
 | `/usr/lib/x86_64-linux-gnu/libfprint-2/tod-1/libpixelauth_pt2887.so` | TOD 驱动 |
-| `/usr/local/bin/pam-biometric-exec.sh` | PAM 助手（调 `fprintd-verify -f any`，认全部已录手指） |
+| `/usr/local/bin/fp-earlypass-helper` | PAM 助手 0.3.0（单进程：窗口上限 + 等待期间不显示 + 回车/Esc 转密码） |
+| `/usr/local/lib/fp-earlypass/fpearlypass/` | 助手用的 Python 包（`session.py` 等；只依赖系统 python3 标准库） |
+| `/usr/local/bin/fp-earlypass-set-window` | 调整指纹窗口秒数（3–60，默认 12） |
 | `/etc/pam.d/sudo`、`sudo-i` | 各插 1 行 |
 | `/usr/local/bin/fprint-delete-finger`（及 `.py`） | 精确删单枚指纹（第 4.2 节） |
 | `/usr/libexec/fprintd`（`fprintd 1.94.3-1+pa1`） | 打过「重新登记」修复补丁的 fprintd（dpkg 装，`apt-mark hold`） |
@@ -439,6 +442,7 @@ sudo install -m 0755 build/libpixelauth_pt2887.so \
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| **0.3.0** | 2026-10-28 | **sudo 指纹等待体验改进（fpearlypass 单进程助手）**：窗口上限（默认 12 秒，`fp-earlypass-set-window` 可调）、等待期间按键不显示、回车/Esc 立即转密码、指纹通过立即通过（PAM 行**必须 sufficient**）、按错（驱动 no-match）立即转密码；已知限制见第 11 节 |
 | 0.2.2 | 2026-10-01 | 修复「补丁漏装 libpam-fprintd → apt 依赖真空（已损坏个数>0，全部更新装不上）」：① apply 两包同装同 hold、revert 对称回滚 ② build.sh 收 libpam 产物与原版回滚包 ③ checkup 新增 [2b] apt 依赖完整性检查 ④ install.sh 幂等检查改为核对两包 |
 | 0.2.1 | 2026-10-01 | 删除工具规范化：安装为 `/usr/local/bin/fprint-delete-finger`（免后缀短名）+ 文档写透"GNOME 46 没有删单枚功能"的实证与用法 |
 | 0.2.0 | 2026-10-01 | ①「重新登记该手指」安全性修复（fprintd 补丁：删除推迟到检查通过后 + 同指豁免；RED/GREEN 实测验证）② sudo 助手改 `fprintd-verify -f any`，修复"只认第一根手指" ③ 新增 `tools/re-register-test.sh` 验收工具 ④ checkup 增加补丁与 `-f any` 检查 |
@@ -450,7 +454,7 @@ sudo install -m 0755 build/libpixelauth_pt2887.so \
 
 ```
 sudo 进不去？
-  Ctrl+Alt+F3 用密码登录 → sudo rm -f /usr/local/bin/pam-biometric-exec.sh
+  Ctrl+Alt+F3 用密码登录 → sudo rm -f /usr/local/bin/fp-earlypass-helper
   （助手不在 = 自动回退密码；密码通道从没被动过）
 
 指纹没反应？
@@ -470,3 +474,34 @@ sudo 进不去？
 只看不装：
   ./install.sh --status
 ```
+
+
+---
+
+## 11. 0.3.0：sudo 指纹等待的体验改进（fpearlypass）
+
+### 11.1 行为
+| 情形 | 结果 |
+|---|---|
+| 指纹通过 | 立即通过 |
+| 指纹**按下但没认出来**（驱动给出 no-match） | **立即**转密码 |
+| 等待期间按 **回车** / **Esc** | 立即转密码；按键不送给 sudo（**Ctrl-C 不保证**） |
+| 等待期间 | 终端不显示按键（助手把终端切到“不显示 + 非规范”，退出前恢复） |
+| 都不发生 | **窗口到点**（默认 12 秒）转密码 |
+
+窗口：`sudo fp-earlypass-set-window N`（3–60 秒）。
+
+### 11.2 已知限制（实测，勿再尝试）
+1. **“按错之后再换正确手指按”不会被接受**。驱动在 sudo 会话里的一次验证只认一个结论；
+   我们若“重开一轮”，被终止的那一轮会让设备无法重新武装（新一轮既不报错也不识别、黄灯常亮到窗口结束）。
+   因此本版选择：**按错即转密码**，不重开。
+2. 驱动在“没按/按错”时要跑满约 29 秒才给出 no-match；窗口（默认 12 秒）通常先到，
+   所以“按错”的直观表现是**等窗口到点**。想更快：`sudo fp-earlypass-set-window 6`（代价是手慢的人会被提前转密码）。
+3. **Ctrl-C 不能转密码**（被驱动/sudo 截获）；请用 **Esc 或回车**。
+4. **盲打的密码不会被助手“交给”sudo**：sudo 在 PAM 阶段自己持有终端，助手读不到。
+5. PAM 行必须是 `sufficient`。
+
+### 11.3 诊断
+- `/tmp/bioauth-pam.log`：每轮开始/结束与 `RESULT=`（不含任何用户输入）
+- `/tmp/fp-early-trace.log`：每轮结论（match / nomatch / window）与是否设备忙
+- `/tmp/.fp-early-*.out`：最近几次 `fprintd-verify` 的原始输出（判断是否 `AlreadyInUse`）
